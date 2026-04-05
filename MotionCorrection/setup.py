@@ -37,6 +37,7 @@ class CMakeBuild(build_ext):
         cmake_args = [
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}",
             f"-DPYTHON_EXECUTABLE={sys.executable}",
+            f"-DPython3_EXECUTABLE={sys.executable}",
         ]
 
         cfg = "Debug" if self.debug else "Release"
@@ -56,15 +57,8 @@ class CMakeBuild(build_ext):
                 else:
                     cmake_args += [f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY_{cfg.upper()}={extdir}"]
             else:
-                # Try MinGW Makefiles as default on Windows
-                try:
-                    subprocess.check_output(["g++", "--version"], stderr=subprocess.STDOUT)
-                    use_mingw = True
-                    cmake_args = ["-G", "MinGW Makefiles"] + cmake_args
-                    build_args = []  # MinGW Makefiles do not accept --config
-                except (OSError, subprocess.CalledProcessError):
-                    # If g++ is not found, let CMake use its default (Visual Studio)
-                    cmake_args += [f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY_{cfg.upper()}={extdir}"]
+                # Let CMake use its default (Visual Studio on GitHub Actions)
+                cmake_args += [f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY_{cfg.upper()}={extdir}"]
 
             if use_mingw:
                 gxx_path = shutil.which("g++")
