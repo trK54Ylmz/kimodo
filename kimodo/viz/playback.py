@@ -154,7 +154,7 @@ class CharacterMotion:
                 new_posed_joints = (
                     new_posed_joints[0]
                     + self.joints_pos[frame_idx, self.skeleton.root_idx : self.skeleton.root_idx + 1]
-                    - self.skeleton.neutral_joints[[self.skeleton.root_idx]]
+                    - self.skeleton.neutral_joints[[self.skeleton.root_idx]].to(new_posed_joints.device)
                 )
                 if joints_rot is None:
                     self.joints_rot[frame_idx] = new_global_rots[0]

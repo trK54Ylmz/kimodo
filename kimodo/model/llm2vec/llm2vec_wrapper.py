@@ -23,7 +23,7 @@ class LLM2VecEncoder(nn.Module):
         self.torch_dtype = getattr(torch, dtype)
         self.llm_dim = llm_dim
         # Update this path to where your model is actually located!
-        self.custom_dir = "/home/aero/kimodo/KIMODO-Meta3_llm2vec_NF4"
+        self.custom_dir = "D:\KIMODO-Meta3_llm2vec_NF4"
         print(f"[LLM2VecEncoder] Initialized (Waiting for first use to load weights)...")
         self.model = None
 
@@ -41,6 +41,9 @@ class LLM2VecEncoder(nn.Module):
                         ctypes.CDLL("libc.so.6").malloc_trim(0)
                     except Exception:
                         pass
+                elif platform.system() == "Windows":
+                    from kimodo.demo.memory_manager import release_system_memory
+                    release_system_memory()
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()
 
@@ -71,6 +74,9 @@ class LLM2VecEncoder(nn.Module):
                     ctypes.CDLL("libc.so.6").malloc_trim(0)
                 except Exception:
                     pass
+            elif platform.system() == "Windows":
+                from kimodo.demo.memory_manager import release_system_memory
+                release_system_memory()
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
             
