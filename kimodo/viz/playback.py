@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Playback and motion editing: CharacterMotion."""
 
+import threading
 from typing import Callable, Literal, Optional
 
 import numpy as np
@@ -63,6 +64,7 @@ class CharacterMotion:
         self.gizmo_space: Literal["world", "local"] = "local"
         self._drag_start_world_rot: list = []
         self._joint_gizmo_dragging: list[bool] = []
+        self._gizmo_lock = threading.Lock()
 
     def precompute_mesh_info(self):
         if self.character.skeleton_mesh is not None:
@@ -87,13 +89,24 @@ class CharacterMotion:
         # update gizmos if frame has changed due to playback
         cur_root_pos = self.joints_pos[self.cur_frame_idx, self.skeleton.root_idx].clone()
         cur_root_pos[1] = 0.0
-        if self.root_translation_gizmo is not None and not self.updating_root_translation_gizmo:
-            self.root_translation_gizmo.position = cur_root_pos.cpu().numpy()
+        with self._gizmo_lock:
+            root_gizmo = self.root_translation_gizmo
+            if root_gizmo is not None and not self.updating_root_translation_gizmo:
+                root_gizmo.position = cur_root_pos.cpu().numpy()
         if self.joint_gizmos is not None:
-            for i, joint_gizmo in enumerate(self.joint_gizmos):
+            with self._gizmo_lock:
+                # Local copy to prevent race conditions if list is cleared mid-loop.
+                joint_gizmos = list(self.joint_gizmos) if self.joint_gizmos is not None else []
+                dragging = list(self._joint_gizmo_dragging) if self._joint_gizmo_dragging is not None else []
+
+            for i, joint_gizmo in enumerate(joint_gizmos):
                 # Do not push wxyz/position while this gizmo is being dragged;
                 # otherwise the client receives e.g. identity and the gizmo snaps back.
-                if not self.updating_joint_gizmos and not self._joint_gizmo_dragging[i]:
+                if (
+                    not self.updating_joint_gizmos
+                    and i < len(dragging)
+                    and not dragging[i]
+                ):
                     joint_gizmo.position = self.joints_pos[self.cur_frame_idx, i].cpu().numpy()
                     if self.gizmo_space == "world":
                         joint_gizmo.wxyz = (1.0, 0.0, 0.0, 0.0)
@@ -325,18 +338,19 @@ class CharacterMotion:
         is called when the drag begins (e.g. to snapshot state for undo).
         """
         # TODO: could also allow rotation around y-axis
-        self.root_translation_gizmo = self.server.scene.add_transform_controls(
-            f"/{self.name}/gizmo_root_translation",
-            scale=0.5,
-            line_width=2.5,
-            active_axes=(True, False, True),  # only allow translation on xz plane
-            disable_axes=False,
-            disable_sliders=False,
-            disable_rotations=True,
-            depth_test=False,  # render even when occluded
-        )
-        init_position = self.get_current_projected_root_pos()
-        self.root_translation_gizmo.position = init_position
+        with self._gizmo_lock:
+            self.root_translation_gizmo = self.server.scene.add_transform_controls(
+                f"/{self.name}/gizmo_root_translation",
+                scale=0.5,
+                line_width=2.5,
+                active_axes=(True, False, True),  # only allow translation on xz plane
+                disable_axes=False,
+                disable_sliders=False,
+                disable_rotations=True,
+                depth_test=False,  # render even when occluded
+            )
+            init_position = self.get_current_projected_root_pos()
+            self.root_translation_gizmo.position = init_position
 
         @self.root_translation_gizmo.on_drag_start
         def _(_):
@@ -432,19 +446,20 @@ class CharacterMotion:
     ):
         # Remove existing joint gizmos first so the client gets remove then add,
         # avoiding in-place update that can briefly show duplicate gizmos.
-        if self.joint_gizmos is not None:
-            for joint_gizmo in self.joint_gizmos:
-                self.server.scene.remove_by_name(joint_gizmo.name)
-            self.joint_gizmos = None
+        with self._gizmo_lock:
+            if self.joint_gizmos is not None:
+                for joint_gizmo in self.joint_gizmos:
+                    self.server.scene.remove_by_name(joint_gizmo.name)
+                self.joint_gizmos = None
 
-        self.joint_gizmos = []
-        self.gizmo_space = space
-        # For world mode: store joint world rotation at drag start to compose with
-        # PivotControls' cumulative-from-identity drag rotation.
-        self._drag_start_world_rot = [None] * self.skeleton.nbjoints
-        # Skip pushing wxyz/position in set_frame while a gizmo is being dragged,
-        # so the client does not receive "snap back" (e.g. identity for world mode).
-        self._joint_gizmo_dragging = [False] * self.skeleton.nbjoints
+            self.joint_gizmos = []
+            self.gizmo_space = space
+            # For world mode: store joint world rotation at drag start to compose with
+            # PivotControls' cumulative-from-identity drag rotation.
+            self._drag_start_world_rot = [None] * self.skeleton.nbjoints
+            # Skip pushing wxyz/position in set_frame while a gizmo is being dragged,
+            # so the client does not receive "snap back" (e.g. identity for world mode).
+            self._joint_gizmo_dragging = [False] * self.skeleton.nbjoints
 
         joint_axis_indices = None
         joint_limits = None
@@ -706,14 +721,15 @@ class CharacterMotion:
     def clear_all_gizmos(self):
         self.updating_root_translation_gizmo = True
         self.updating_joint_gizmos = True
-        if self.root_translation_gizmo is not None:
-            self.server.scene.remove_by_name(self.root_translation_gizmo.name)
-            self.root_translation_gizmo = None
-        if self.joint_gizmos is not None:
-            for joint_gizmo in self.joint_gizmos:
-                self.server.scene.remove_by_name(joint_gizmo.name)
-            self.joint_gizmos = None
-        self._drag_start_world_rot = []
-        self._joint_gizmo_dragging = []
+        with self._gizmo_lock:
+            if self.root_translation_gizmo is not None:
+                self.server.scene.remove_by_name(self.root_translation_gizmo.name)
+                self.root_translation_gizmo = None
+            if self.joint_gizmos is not None:
+                for joint_gizmo in self.joint_gizmos:
+                    self.server.scene.remove_by_name(joint_gizmo.name)
+                self.joint_gizmos = None
+            self._drag_start_world_rot = []
+            self._joint_gizmo_dragging = []
         self.updating_root_translation_gizmo = False
         self.updating_joint_gizmos = False
