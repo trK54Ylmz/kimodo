@@ -37,13 +37,16 @@ class LLM2VecEncoder(nn.Module):
                 print(f"[LLM2VecEncoder] Offloading 5.4GB model to System RAM...")
                 self.model.model.to("cpu")
                 gc.collect()
-                import platform
                 if platform.system() == "Linux":
                     try:
                         import ctypes
                         ctypes.CDLL("libc.so.6").malloc_trim(0)
                     except Exception:
                         pass
+                elif platform.system() == "Windows":
+                    from kimodo.demo.memory_manager import release_system_memory
+                    release_system_memory()
+
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     torch.cuda.ipc_collect()
