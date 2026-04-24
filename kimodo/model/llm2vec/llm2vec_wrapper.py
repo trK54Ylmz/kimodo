@@ -84,6 +84,9 @@ class LLM2VecEncoder(nn.Module):
                     ctypes.CDLL("libc.so.6").malloc_trim(0)
                 except Exception:
                     pass
+            elif platform.system() == "Windows":
+                from kimodo.demo.memory_manager import release_system_memory
+                release_system_memory()
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
