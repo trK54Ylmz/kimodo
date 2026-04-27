@@ -11,6 +11,8 @@ Motion generation can be performed with several trained Kimodo models that vary 
 
 | Model | Skeleton | Training Data | Release Date | Hugging Face | License |
 |-------|------|------|-------------|-------------|----|
+| **Kimodo-SOMA-RP-v1.1** | [SOMA](https://github.com/NVlabs/SOMA-X) | [Bones Rigplay 1](https://bones.studio/datasets#rp01) | April 10, 2026 | [Link](https://huggingface.co/nvidia/Kimodo-SOMA-RP-v1.1) | [NVIDIA Open Model](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) |
+| **Kimodo-SOMA-SEED-v1.1** | [SOMA](https://github.com/NVlabs/SOMA-X) | [BONES-SEED](https://huggingface.co/datasets/bones-studio/seed) | April 10, 2026  | [Link](https://huggingface.co/nvidia/Kimodo-SOMA-SEED-v1.1) | [NVIDIA Open Model](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) |
 | **Kimodo-SOMA-RP-v1** | [SOMA](https://github.com/NVlabs/SOMA-X) | [Bones Rigplay 1](https://bones.studio/datasets#rp01) | March 16, 2026 | [Link](https://huggingface.co/nvidia/Kimodo-SOMA-RP-v1) | [NVIDIA Open Model](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) |
 | **Kimodo-G1-RP-v1** | [Unitree G1](https://github.com/unitreerobotics/unitree_mujoco/tree/main/unitree_robots/g1) | [Bones Rigplay 1](https://bones.studio/datasets#rp01) | March 16, 2026  | [Link](https://huggingface.co/nvidia/Kimodo-G1-RP-v1) | [NVIDIA Open Model](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) |
 | **Kimodo-SOMA-SEED-v1** | [SOMA](https://github.com/NVlabs/SOMA-X) | [BONES-SEED](https://huggingface.co/datasets/bones-studio/seed) | March 16, 2026  | [Link](https://huggingface.co/nvidia/Kimodo-SOMA-SEED-v1) | [NVIDIA Open Model](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) |
@@ -18,10 +20,10 @@ Motion generation can be performed with several trained Kimodo models that vary 
 | **Kimodo-SMPLX-RP-v1** | [SMPL-X](https://github.com/vchoutas/smplx) | [Bones Rigplay 1](https://bones.studio/datasets#rp01) | March 16, 2026  | [Link](https://huggingface.co/nvidia/Kimodo-SMPLX-RP-v1) | [NVIDIA R&D Model](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-internal-scientific-research-and-development-model-license/) |
 
 By default, we recommend using the models trained on the full Bones Rigplay dataset (700 hours of mocap) for your motion generation needs.
-The models trained on BONES-SEED use 288 hours of [publicly available mocap data](https://huggingface.co/datasets/bones-studio/seed) so are less capable, but are useful for comparing your own trained models on the same dataset. Soon, we will be releasing a benchmark to make it easy to compare motion generation models trained on BONES-SEED.
+The models trained on BONES-SEED use 288 hours of [publicly available mocap data](https://huggingface.co/datasets/bones-studio/seed) so are less capable, but are useful for comparing your own trained models on the same dataset. See the [benchmark](../benchmark/introduction.md) for a standardized evaluation suite on BONES-SEED.
 
 ### Recommended Hardware
-Kimodo requires  ~17GB of VRAM to generate locally, due primarily to the size of the text embedding model.
+Kimodo requires  ~17GB of VRAM to generate locally entirely on GPU, due primarily to the size of the text embedding model. If you have a smaller card, set `TEXT_ENCODER_DEVICE=cpu` when running Kimodo commands to force text encoding to the CPU. This is slightly slower but reduces VRAM usage to <3 GB.
 
 The model has been most extensively tested on GeForce RTX 3090, GeForce RTX 4090, and NVIDIA A100 GPUs, but it should work on other recent cards with sufficient VRAM.
 
@@ -41,6 +43,11 @@ docker compose up text-encoder
 ```
 
 > Note: when the text encoder is initialized, the transformers library will report several unexpected and missing layers for LLM2Vec. These are expected and can be safely ignored.
+
+If you are running on a GPU with <16 GB VRAM, you can force the text encoder to the CPU, for example:
+```bash
+TEXT_ENCODER_DEVICE=cpu kimodo_textencoder
+```
 
 ## Command-Line Text-to-Motion Generation
 **[CLI Documentation](../user_guide/cli.md)**

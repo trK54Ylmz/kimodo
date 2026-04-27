@@ -9,7 +9,7 @@ import torch
 from torch import nn
 from tqdm.auto import tqdm
 
-from kimodo.constraints import FullBodyConstraintSet
+from kimodo.constraints import EndEffectorConstraintSet, FullBodyConstraintSet
 from kimodo.motion_rep.feature_utils import compute_heading_angle, length_to_mask
 from kimodo.postprocess import post_process_motion
 from kimodo.sanitize import sanitize_texts
@@ -187,15 +187,10 @@ class Kimodo(nn.Module):
             )
 
             if not is_first_motion:
-                prev_num_frame = num_frames[idx - 1]
-                if share_transition:
-                    # starting the transitioning earlier, to "share" the transition between A and B
-                    # in any case, we still use "num_transition_frames" for conditioning
-                    # we don't condition until the end of A
-                    # we compute the number of frames of transition as a percentage of the last motion
-                    nb_transition_frames = num_transition_frames + int(prev_num_frame * percentage_transition_override)
-                else:
-                    nb_transition_frames = num_transition_frames
+                nb_transition_frames = num_transition_frames
+
+                if nb_transition_frames < 1:
+                    raise ValueError(f"num_transition_frames must be at least 1, got {nb_transition_frames}")
 
                 latest_motions = generated_motions.pop()
                 # remove the transition part of A (will be put back afterward)
@@ -217,12 +212,20 @@ class Kimodo(nn.Module):
                         self.skeleton,
                         torch.arange(num_transition_frames),
                         last_output["posed_joints"][batch_id, :num_transition_frames],
-                        last_output["local_rot_mats"][batch_id, :num_transition_frames],
+                        last_output["global_rot_mats"][batch_id, :num_transition_frames],
                         smooth_root_2d[batch_id, :num_transition_frames],
                     )
+                    # separate end-effector constraint to capture hand/feet rotations
+                    new_ee_constraint = EndEffectorConstraintSet(
+                        self.skeleton,
+                        torch.arange(num_transition_frames),
+                        last_output["posed_joints"][batch_id, :num_transition_frames],
+                        last_output["global_rot_mats"][batch_id, :num_transition_frames],
+                        smooth_root_2d[batch_id, :num_transition_frames],
+                        joint_names=["LeftHand", "RightHand", "LeftFoot", "RightFoot"],
+                    )
 
-                    # new lists
-                    constraint_lst_transition.append([new_constraint])
+                    constraint_lst_transition.append([new_constraint, new_ee_constraint])
 
                 transition_lengths = torch.tensor(
                     [nb_transition_frames for _ in range(num_samples)],
@@ -287,23 +290,69 @@ class Kimodo(nn.Module):
                     last_smooth_root_2d,
                 )
 
-                motion = motion_with_transition[:, num_transition_frames:]
-                transition_frames = motion_with_transition[:, :num_transition_frames]
-                # for sharing = True, the new motion contains the very last of A
+                if post_processing:
+                    # Per-segment postprocessing: inverse, postprocess, re-encode.
+                    # The full transition+segment is postprocessed together so the
+                    # transition constraints keep the junction smooth.
+                    seg_output = self.motion_rep.inverse(
+                        motion_with_transition, is_normalized=False, return_numpy=False,
+                    )
+                    seg_constraints = [list(cl) for cl in constraint_lst_transition]
+                    for bi in range(bs):
+                        seg_constraints[bi].extend(
+                            [c.crop_move(current_frame - nb_transition_frames,
+                                         current_frame - nb_transition_frames + num_frame + nb_transition_frames)
+                             for c in constraint_lst]
+                        )
+                    corrected = post_process_motion(
+                        seg_output["local_rot_mats"],
+                        seg_output["root_positions"],
+                        seg_output["foot_contacts"],
+                        self.skeleton,
+                        seg_constraints,
+                        root_margin=root_margin,
+                    )
+                    seg_output.update(corrected)
+                    motion = self.motion_rep(
+                        seg_output["local_rot_mats"],
+                        seg_output["root_positions"],
+                        to_normalize=False,
+                        lengths=lengths,
+                    )
+                else:
+                    motion = motion_with_transition[:, num_transition_frames:]
+                    transition_frames = motion_with_transition[:, :num_transition_frames]
 
-                # linearly combine the previously generated transitions with the newly generated ones
-                # so that we linearly go from previous gen to new gen
-                alpha = torch.linspace(1, 0, num_transition_frames, device=device)[:, None]
-                new_transition_frames = (
-                    latest_frames[:, :num_transition_frames] * alpha + (1 - alpha) * transition_frames
+                    # linearly combine the previously generated transitions with the newly generated ones
+                    alpha = torch.linspace(1, 0, num_transition_frames, device=device)[:, None]
+                    new_transition_frames = (
+                        latest_frames[:, :num_transition_frames] * alpha + (1 - alpha) * transition_frames
+                    )
+
+                    # add new transitions frames for A (merging with B prediction of the history)
+                    generated_motions.append(new_transition_frames)
+
+            elif post_processing:
+                # First segment: postprocess immediately
+                seg_output = self.motion_rep.inverse(
+                    motion, is_normalized=False, return_numpy=False,
                 )
-
-                # add new transitions frames for A (merging with B predition of the history)
-                # for share_transition == True, this remove (do not add back) a small part of the end of A
-                # the small last part of A has been re-generated by B
-                generated_motions.append(new_transition_frames)
-
-                # motion[..., 2] += 0.5
+                seg_constraints = constraint_lst_base if constraint_lst_base else []
+                corrected = post_process_motion(
+                    seg_output["local_rot_mats"],
+                    seg_output["root_positions"],
+                    seg_output["foot_contacts"],
+                    self.skeleton,
+                    seg_constraints,
+                    root_margin=root_margin,
+                )
+                seg_output.update(corrected)
+                motion = self.motion_rep(
+                    seg_output["local_rot_mats"],
+                    seg_output["root_positions"],
+                    to_normalize=False,
+                    lengths=lengths,
+                )
 
             generated_motions.append(motion)
             current_frame += num_frame
@@ -319,17 +368,8 @@ class Kimodo(nn.Module):
             return_numpy=False,
         )
 
-        # Apply post-processing if requested
-        if post_processing:
-            corrected = post_process_motion(
-                output["local_rot_mats"],
-                output["root_positions"],
-                output["foot_contacts"],
-                self.skeleton,
-                constraint_lst,
-                root_margin=root_margin,
-            )
-            output.update(corrected)
+        # Post-processing: already applied per-segment inside the loop above,
+        # so no additional post-processing pass is needed here.
 
         # Convert SOMA output to somaskel77 for external API
         if isinstance(self.skeleton, SOMASkeleton30):

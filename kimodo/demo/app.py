@@ -80,6 +80,11 @@ class Demo:
         self._generation_lock = threading.Lock()
         self._cuda_healthy = True
 
+        # Per-client sessions
+        self.client_sessions: dict[int, ClientSession] = {}
+        self.start_direction_markers: dict[int, viser_utils.WaypointMesh] = {}
+        self.grid_handles: dict[int, viser.GridHandle] = {}
+
         self.server = viser.ViserServer(
             host=SERVER_NAME,
             port=SERVER_PORT,
@@ -676,6 +681,8 @@ class Demo:
             else:
                 playback_fps = 60.0
 
+            # update each client session independently
+            #   copy to a list first to avoid changing size if client disconnects
             for client_id, session in list(self.client_sessions.items()):
                 update_interval = int(playback_fps / (session.playback_speed * session.model_fps))
                 new_frame_idx = session.frame_idx
