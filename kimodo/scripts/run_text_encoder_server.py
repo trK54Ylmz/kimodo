@@ -56,12 +56,14 @@ def _get_env(name: str, default):
     return os.getenv(name, default)
 
 
-def _build_text_encoder(name: str):
+def _build_text_encoder(name: str, fp32: bool = False):
     if name not in TEXT_ENCODER_PRESETS:
         available = ", ".join(sorted(TEXT_ENCODER_PRESETS))
         raise ValueError(f"Unknown TEXT_ENCODER='{name}'. Available: {available}")
     preset = TEXT_ENCODER_PRESETS[name]
     target_cls = resolve_target(preset["target"])
+    if fp32:
+        preset["kwargs"]["dtype"] = "float32"
     return target_cls(**preset["kwargs"])
 
 
@@ -77,6 +79,11 @@ def parse_args():
         "--tmp-folder",
         default=_get_env("TEXT_ENCODER_TMP_FOLDER", DEFAULT_TMP_FOLDER),
     )
+    parser.add_argument(
+        "--fp32",
+        action="store_true",
+        help="Uses fp32 for the text encoder rather than default bfloat16.",
+    )
     return parser.parse_args()
 
 
@@ -86,7 +93,7 @@ def main():
     server_port = int(_get_env("GRADIO_SERVER_PORT", DEFAULT_SERVER_PORT))
     theme, css = get_gradio_theme()
     os.makedirs(args.tmp_folder, exist_ok=True)
-    text_encoder = _build_text_encoder(args.text_encoder)
+    text_encoder = _build_text_encoder(args.text_encoder, args.fp32)
     display_name = TEXT_ENCODER_PRESETS[args.text_encoder]["display_name"]
     demo_wrapper_fn = DemoWrapper(text_encoder, args.tmp_folder)
 

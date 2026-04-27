@@ -23,9 +23,14 @@ class LLM2VecEncoder(nn.Module):
         super().__init__()
         self.torch_dtype = getattr(torch, dtype)
         self.llm_dim = llm_dim
-        # Update this path to where your model is actually located!
-        root_path = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir, os.pardir, os.pardir))
-        self.custom_dir = os.path.abspath(os.path.join(root_path, "models", "KIMODO-Meta3_llm2vec_NF4"))
+        
+        custom_path = r"path_to_your_Llama_text-encoders"
+        if os.path.exists(custom_path):
+            self.custom_dir = custom_path
+        else:
+            root_path = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir, os.pardir, os.pardir))
+            self.custom_dir = os.path.abspath(os.path.join(root_path, "models", "KIMODO-Meta3_llm2vec_NF4"))
+        
         print(f"[LLM2VecEncoder] Initializing model from {self.custom_dir}...")
         print(f"[LLM2VecEncoder] Initialized (Waiting for first use to load weights)...")
         self.model = None
@@ -108,8 +113,6 @@ class LLM2VecEncoder(nn.Module):
 
     def delete(self):
         """Reclaim RAM without deleting from disk unless absolutely necessary."""
-        # We no longer delete the model by default to avoid slow reloads.
-        # Just unload to CPU instead.
         self.unload()
 
     def __call__(self, text: list[str] | str):
